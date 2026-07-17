@@ -37,13 +37,20 @@ curl -s -X POST http://127.0.0.1:8000/analyze \
 
 ### 2. Coolify — Public repository (no GitHub App needed)
 
-Once you have a public repo containing this directory:
+Public repo already exists at `https://github.com/quinnsnell/sentiment-test-app`.
 
 1. Coolify UI → **New Resource → Application → Public Repository**.
-2. Paste the repo URL, pick the `sentiment-test-app/` subdirectory (or move these files to the repo root).
+2. Paste `https://github.com/quinnsnell/sentiment-test-app` (files are at the repo root).
 3. Build pack: **Dockerfile**.
-4. Env: `LITELLM_URL=http://rigel.cs.byu.edu:4000/v1` (Docker network on rigel — LiteLLM is reachable at `172.17.0.1:4000` if you'd rather stay on the docker bridge).
-5. Deploy. Note the auto-generated hostname (e.g. `sentiment-test.apps.class.byu.edu`).
+4. Env: `LITELLM_URL=http://rigel.cs.byu.edu:4000/v1` (or `http://172.17.0.1:4000/v1` if you'd rather stay on the docker bridge).
+5. **Because DNS for `*.apps.class.byu.edu` isn't wired yet, expose the container on a fixed host port instead of relying on Traefik hostname routing:**
+   - Coolify UI → application → **Configuration → Network** → set **Ports Mappings** to something like `8100:8000` (rigel's `:8100` → container's `:8000`).
+   - Save + redeploy.
+6. Test from your Mac:
+   ```bash
+   ./smoke-test-cluster.sh -p 8100
+   ```
+   Once DNS is wired later, switch to hostname routing and drop the `-p` flag.
 
 ### 3. Coolify — Docker Image (needs a public registry account)
 
