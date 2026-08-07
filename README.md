@@ -74,3 +74,4 @@ SENTIMENT_URL=https://sentiment-test.apps.class.byu.edu ./smoke-test-cluster.sh
 ```
 
 It will exercise `/health` and a `POST /analyze` and print the classification.
+
