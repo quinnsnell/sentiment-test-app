@@ -19,11 +19,13 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+APP_VERSION = "0.2.0"
+
 LITELLM_URL = os.environ.get("LITELLM_URL", "http://rigel.cs.byu.edu:4000/v1").rstrip("/")
 LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", "sk-noauth")
 MODEL = os.environ.get("MODEL", "classroom-chat")
 
-app = FastAPI(title="Sentiment via LiteLLM", version="0.1.0")
+app = FastAPI(title="Sentiment via LiteLLM", version=APP_VERSION)
 
 
 class AnalyzeRequest(BaseModel):
@@ -59,7 +61,7 @@ def _extract_json(content: str) -> dict:
 
 @app.get("/health")
 def health():
-    return {"ok": True, "litellm": LITELLM_URL, "model": MODEL}
+    return {"ok": True, "version": APP_VERSION, "litellm": LITELLM_URL, "model": MODEL}
 
 
 @app.post("/analyze", response_model=AnalyzeResponse)
