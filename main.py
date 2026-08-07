@@ -19,7 +19,7 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.2.1"
 
 LITELLM_URL = os.environ.get("LITELLM_URL", "http://rigel.cs.byu.edu:4000/v1").rstrip("/")
 LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", "sk-noauth")
