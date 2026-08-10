@@ -15,12 +15,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Pre-download the HF sentiment model at build time so first request is fast.
 # Override at build time with:
 #   docker build --build-arg LOCAL_MODEL_ID=<other-model> .
+# Single-line RUN — do NOT use `\` continuations here. Coolify (and other CI/CD
+# tools) may inject synthetic ARG directives between RUN steps, which breaks
+# multi-line RUN commands with backslash continuations.
 ARG LOCAL_MODEL_ID=cardiffnlp/twitter-roberta-base-sentiment-latest
 ENV LOCAL_MODEL_ID=${LOCAL_MODEL_ID}
-RUN python -c "\
-from transformers import AutoTokenizer, AutoModelForSequenceClassification; \
-AutoTokenizer.from_pretrained('${LOCAL_MODEL_ID}'); \
-AutoModelForSequenceClassification.from_pretrained('${LOCAL_MODEL_ID}')"
+RUN python -c "from transformers import AutoTokenizer, AutoModelForSequenceClassification; AutoTokenizer.from_pretrained('${LOCAL_MODEL_ID}'); AutoModelForSequenceClassification.from_pretrained('${LOCAL_MODEL_ID}')"
 
 COPY main.py .
 
