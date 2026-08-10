@@ -2,3 +2,12 @@ fastapi==0.115.6
 uvicorn[standard]==0.34.0
 httpx==0.28.1
 pydantic==2.10.5
+
+# Local ML pipeline (HuggingFace + PyTorch with CUDA support built into wheels)
+transformers==4.45.2
+torch==2.4.1
+sentencepiece==0.2.0
+accelerate==0.34.2
+
+# Testing
+pytest==8.3.4

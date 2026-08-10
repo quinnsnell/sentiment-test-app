@@ -1,0 +1,49 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main, staging]
+
+jobs:
+  # Runs on every push and every PR. GitHub-hosted runner is fine — unit tests
+  # don't hit the VPN-only LLM.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Unit tests
+        run: pytest tests/ -v
+
+      - name: Docker build (proves the Dockerfile is valid)
+        run: docker build -t sentiment-test-app .
+
+  # Deploys to STAGING. Runs on push to `staging` (not on PRs), after `test` passes.
+  # Coolify's post-deploy health check on /health verifies the LLM path works
+  # end-to-end; if /health fails, Coolify marks the deploy unhealthy.
+  deploy-staging:
+    needs: test
+    if: github.ref == 'refs/heads/staging' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Coolify staging deploy
+        run: curl -fsSL -X POST "${{ secrets.COOLIFY_DEPLOY_WEBHOOK_STAGING }}"
+
+  # Deploys to PROD. Runs on push to `main` (usually via merged PR from `staging`),
+  # after `test` passes.
+  deploy-prod:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Coolify prod deploy
+        run: curl -fsSL -X POST "${{ secrets.COOLIFY_DEPLOY_WEBHOOK_PROD }}"
