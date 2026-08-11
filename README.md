@@ -76,20 +76,72 @@ Read at runtime; never hardcode. Set locally via `.env` file (git-ignored) or vi
 
 ## Local development
 
-Build and run on your Mac; confirms the code works before pushing. Requires BYU VPN for the LLM call to succeed.
+The recommended loop is:
+
+1. **Edit code.**
+2. **`./test-local.sh`** — runs pytest + docker build + starts the container + hits every endpoint. Fails fast without a 5-6 min Coolify roundtrip.
+3. Push only when green.
+
+### Quick start
 
 ```bash
-# Copy the example env file and edit if needed
-cp .env.example .env
+cp .env.example .env             # local config, git-ignored
+./test-local.sh                  # full loop: pytest, build, run, endpoint checks
+```
 
-# Build (slow first time — ~3-5 min; downloads torch + the HF model into the image)
+The script:
+
+- Runs `pytest` first (< 1 second — catches Python bugs immediately)
+- Builds the Docker image
+- Starts the container (tries `--gpus all` first, falls back to CPU if no NVIDIA runtime — happens on Macs)
+- Polls `/ready` (up to 180s while the HF model loads)
+- Hits `/gpu`, `/health`, `/analyze` with positive + negative samples
+- Cleans up on exit
+
+Requires BYU VPN for the `/health` and `/analyze` checks (they call the classroom LiteLLM).
+
+Useful flags:
+
+```bash
+./test-local.sh --skip-build         # reuse the existing image (fast iteration on main.py only)
+./test-local.sh --skip-live          # unit tests only, no docker
+./test-local.sh --keep-running       # leave the container up at the end for manual poking
+./test-local.sh --port 9000          # publish on a different host port
+```
+
+### Manual smoke tests
+
+If you'd rather drive it by hand:
+
+```bash
 docker build -t sentiment-test-app .
-
-# Run — HF model will load on startup (~30s). GPU is preferred; CPU works too.
 docker run --rm -p 8000:8000 --env-file .env sentiment-test-app
+# In another shell:
+curl -sS http://127.0.0.1:8000/ready
+curl -sS http://127.0.0.1:8000/gpu | python3 -m json.tool
+curl -sS http://127.0.0.1:8000/health | python3 -m json.tool
+curl -sS -X POST http://127.0.0.1:8000/analyze \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"I loved the movie!"}' | python3 -m json.tool
 ```
 
 See `.env.example` for every configurable variable, including the commented-out `CUDA_VISIBLE_DEVICES` pinning line (Pattern A from the GPU-sharing section below).
+
+### The full "update-test-PR-deploy" loop
+
+The intended development flow for the whole class:
+
+1. Branch off `staging`: `git checkout staging && git checkout -b your-feature`
+2. Edit code
+3. **`./test-local.sh`** — green before you push
+4. `git push origin your-feature`
+5. Open PR into `staging` — GitHub Actions `test` job runs on the PR
+6. Merge the PR — pushes to `staging`, triggers `deploy-staging`
+7. Check staging URL manually
+8. Open PR from `staging` → `main` when staging looks good
+9. Merge — pushes to `main`, triggers `deploy-prod`
+
+`test-local.sh` gates step 4 (before push), Actions gates steps 6 and 9 (before deploy). Two safety layers.
 
 In another shell:
 
