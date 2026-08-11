@@ -143,16 +143,6 @@ The intended development flow for the whole class:
 
 `test-local.sh` gates step 4 (before push), Actions gates steps 6 and 9 (before deploy). Two safety layers.
 
-In another shell:
-
-```bash
-curl -sS http://127.0.0.1:8000/ready
-curl -sS http://127.0.0.1:8000/health | python3 -m json.tool
-curl -sS -X POST http://127.0.0.1:8000/analyze \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"I loved the movie, it was fantastic!"}' | python3 -m json.tool
-```
-
 ## GPU access in Coolify
 
 For the local HF classifier to actually use a GPU (not CPU fallback), Coolify needs to hand a GPU to the container. In the Application config:
@@ -215,7 +205,7 @@ Unit tests cover input validation, response shape, model-agreement logic, and th
 
 `.github/workflows/ci.yml` implements a **test → deploy-staging → deploy-prod** pipeline:
 
-- **`test`** — unit tests + `docker build`. Runs on every push and every PR. GitHub-hosted runner.
+- **`test`** — runs pytest with lightweight deps (no `docker build`, no torch install — see "How this app is packaged" below for why). Runs on every push and every PR. GitHub-hosted runner. ~15s.
 - **`deploy-staging`** — `curl` to Coolify's staging Deploy Webhook. Runs on push to `staging` branch.
 - **`deploy-prod`** — `curl` to Coolify's prod Deploy Webhook. Runs on push to `main`.
 
@@ -227,6 +217,113 @@ Unit tests cover input validation, response shape, model-agreement logic, and th
 - Turn OFF Coolify's own "Auto Deploy" toggle so pushes only deploy via Actions
 - Point Coolify's health check at `/health` (Coolify default) so failing LLM or local-model paths fail the deploy
 - Both Applications set `LITELLM_URL`, `MODEL`, and (if GPU is available) `DEVICE=cuda:0`
+
+## How this app is packaged (and why)
+
+This section is a teaching detour. If you just want to ship code, you can skip it — but it explains a real production pattern you'll encounter at any company that ships ML apps, and it's why your deploys are ~30 seconds instead of ~5 minutes.
+
+### The problem
+
+The container image for this app contains:
+
+- Python 3.12 (~50 MB)
+- `torch` and CUDA runtime libraries (~750 MB)
+- `transformers` and friends (~500 MB)
+- The pre-downloaded HuggingFace sentiment model (~500 MB)
+- Your actual code — `main.py` — (about 8 KB)
+
+That's **~1.8 GB of heavy dependencies vs. 8 KB of code**. Almost all pushes only change the 8 KB. If you build the image from scratch on every push, you pay the ~5 minutes to reinstall torch and re-download the model **every time** — even when nothing about them changed.
+
+### The solution — two Dockerfiles
+
+This repo has two Docker files instead of one:
+
+```
+Dockerfile.base   ← heavy stuff: Python + torch + transformers + HF model
+Dockerfile        ← thin layer: FROM the base image + COPY main.py
+```
+
+**`Dockerfile.base`** — rebuilt only when `requirements.txt` or `Dockerfile.base` itself changes. When rebuilt, the resulting image is pushed to GitHub Container Registry (GHCR) at `ghcr.io/quinnsnell/sentiment-test-app-base:latest`. This is our long-lived, cached "everything except my code" image.
+
+**`Dockerfile`** — starts with `FROM ghcr.io/quinnsnell/sentiment-test-app-base:latest` and just adds `main.py`. Rebuilds on every push. Since almost nothing new happens in the build (base is already cached, only one tiny COPY + tag), it's seconds.
+
+### What triggers each rebuild
+
+Two GitHub Actions workflows handle this split:
+
+| Workflow file | Triggers on | Time | Output |
+|---|---|---|---|
+| `.github/workflows/build-base.yml` | Push touching `requirements.txt` or `Dockerfile.base` | ~5-8 min (first) / ~1-2 min (cached) | Pushes base image to GHCR |
+| `.github/workflows/ci.yml` | Push touching `main.py`, tests, or the workflow itself | ~15s test + ~30-60s Coolify build | Runs tests, triggers Coolify deploy |
+
+The base workflow uses `docker/build-push-action` with a **BuildKit registry cache** (`cache-to: ghcr.io/...:buildcache`). Second and later runs pull unchanged layers from GHCR — even inside a fresh Actions runner, only the layers that actually changed get rebuilt.
+
+### Where the caches actually live — the crucial insight
+
+Docker layer caching is only useful if there's a persistent place to store the cache between runs. Different parts of a CI/CD pipeline have wildly different cache behavior:
+
+| Where docker runs | Cache persistence | Effect |
+|---|---|---|
+| **GitHub Actions `test` job** | We don't do docker there at all | N/A |
+| **GitHub Actions `build-base` job** | Fresh VM each run → no local cache | Compensated by BuildKit registry cache to GHCR |
+| **GitHub Actions inside runners in general** | Ephemeral | Every image pull is fresh; every build starts from zero unless you configure external cache |
+| **Coolify's build container on rigel** | Persistent local docker cache | Pulls base image once, reuses forever until the tag moves |
+| **Your Mac when you run `test-local.sh`** | Persistent local docker cache | Same as Coolify — cached after first pull |
+| **Docker registries (GHCR, Docker Hub)** | Persistent by nature | Can act as a distributed cache via `cache-from`/`cache-to` |
+
+The split-image pattern **only pays off where caches persist**. That's Coolify (our main win) and your Mac (your dev loop). It doesn't help GitHub-hosted runners much, which is why we don't do `docker build` in the `test` job at all — we just run `pytest` with lightweight deps installed via pip.
+
+### The performance numbers
+
+Measured on a code-only push (main.py version bump):
+
+| Step | Before split | After split, first push | After split, subsequent pushes |
+|---|---|---|---|
+| Actions `test` job | ~2 min | ~15s | ~15s |
+| Coolify build | ~5 min | ~5 min (fresh base pull) | ~5-10s |
+| Container start + model load | ~30-60s | ~30-60s | ~30-60s |
+| Health check grace | ~30s | ~30s | ~30s |
+| **Total push-to-live** | **~7 min** | **~6 min** | **~1 min** |
+
+That's a 7x improvement on the common case (code changes). Requirements changes still incur the ~5-8 min base rebuild, but they're rare — you're not adding a new pip package every push.
+
+### Trade-offs
+
+**Costs:**
+- Two Dockerfiles to keep in sync (`Dockerfile.base` and `Dockerfile`)
+- Extra Actions workflow to run + maintain
+- The base image is publicly readable in GHCR (fine here — no secrets — but something to think about in industry)
+- First-ever pull on any host is still slow (~2 GB over the network)
+- Coordination: if `requirements.txt` changes but the base workflow hasn't finished yet when Coolify tries to deploy, the app will pull the OLD base image
+
+**When it's worth it:**
+- Heavy dependencies (>500 MB total)
+- Dependencies change less often than app code (typical for ML apps)
+- You care about deploy latency (production apps, developer flow)
+
+**When it's overkill:**
+- Small apps (< 200 MB total)
+- Dependencies churn as fast as code
+- Deploy latency doesn't matter (batch jobs, long-running services)
+- You have exactly one deployment target and rebuilds are rare
+
+### Alternative patterns you'll see in production
+
+For context, the industry has other ways to solve the "heavy dependencies, fast deploys" problem:
+
+**1. Model-as-a-service (the classroom's `classroom-chat` pattern).** Don't ship the model in the app at all. Run it as its own service (vLLM, Triton, TorchServe) that many apps call via API. This is what LiteLLM does for us — Qwen3-Coder-Next lives on castor+pollux, students' apps are tiny clients. **App builds go from ~5 min to seconds.** Trade-off: you lose "app owns model" isolation; you have another service to run.
+
+**2. Persistent volume mounted at runtime.** Don't bake the model into the image at all; mount it from a persistent volume when the container starts. `main.py` still calls `AutoModel.from_pretrained('/models/roberta')`. Image is tiny, first container start is slow (loading model from disk into VRAM), subsequent starts are fast. Trade-off: infrastructure complexity (need a persistent volume system like Kubernetes PV or NFS).
+
+**3. Straight single-Dockerfile bake with layer caching.** Just one `Dockerfile` that installs everything, but rely on Docker's own layer caching to skip unchanged steps. Works fine when your build host has a stable cache. Falls over on ephemeral CI runners — which is why our first Coolify builds were so slow.
+
+**4. Sidecar model service.** In Kubernetes, deploy a small "model sidecar" alongside the app container. App calls localhost:8500, sidecar has the model loaded. Similar to model-as-a-service but co-located. Common in Google internal setups.
+
+The right pattern depends on your scale and constraints. For a classroom demo where the goal is to show you can use a local GPU model, the split-image approach is a good middle ground: educational, still-real production pattern, works on rigel today. In a real job you might pick #1 or #2 instead.
+
+### The takeaway
+
+Fast deploys don't come from "make Docker faster" — they come from **structuring your image so the parts that change often are separated from the parts that rarely change**, then **making sure the cache lives where builds happen**. That's the whole trick.
 
 ## Branch flow
 
