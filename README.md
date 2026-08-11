@@ -61,6 +61,29 @@ Example `/analyze` response:
 }
 ```
 
+## Code layout
+
+Business logic is split across small focused modules; `main.py` stays thin and just handles HTTP.
+
+| File | Responsibility |
+|---|---|
+| `main.py` | FastAPI app, endpoints (`/ready`, `/gpu`, `/health`, `/analyze`), and startup lifespan |
+| `config.py` | Environment-variable reads + `APP_VERSION`. One place to see everything the app is configured with. |
+| `device.py` | GPU / CPU detection (`detect_device`, `DEVICE`) and status introspection for `/gpu` |
+| `schemas.py` | Pydantic request/response shapes: `AnalyzeRequest`, `LLMResult`, `LocalResult`, `AnalyzeResponse` |
+| `llm_client.py` | Talking to the classroom LiteLLM: `classify_llm`, `extract_json`, `health_check` |
+| `local_classifier.py` | Loading and calling the local HF pipeline: `load_pipeline`, `classify_local`, `health_check` |
+| `tests/` | `test_api.py` for the HTTP surface, `test_extract_json.py` for the JSON parser |
+
+The **why** — separation of concerns:
+
+- `main.py` doesn't know how to talk to LiteLLM or how a HuggingFace pipeline works. It just wires HTTP verbs to functions in other modules. If you swap FastAPI for another web framework, only `main.py` changes.
+- `llm_client.py` doesn't know anything about HTTP endpoints. It's callable from a script, a Jupyter notebook, or a batch job.
+- `device.py` doesn't know about sentiment or FastAPI. It could be reused verbatim in any GPU-using app.
+- Tests can patch specific modules without touching everything else. `test_api.py` patches `main.llm_client.classify_llm` — it doesn't need to know what HTTP calls that function makes.
+
+This is a real pattern you'll see in production Python apps. The rule of thumb is **each file does one thing well**, and the file names announce what that thing is. When a file grows past ~150 lines or starts having "and" in its purpose statement, it usually wants to be split.
+
 ## Config (environment variables)
 
 Read at runtime; never hardcode. Set locally via `.env` file (git-ignored) or via Coolify's Environment Variables tab for deployed instances.

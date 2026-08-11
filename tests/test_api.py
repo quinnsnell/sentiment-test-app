@@ -1,22 +1,23 @@
-"""Unit tests for the sentiment app.
+"""Unit tests for the sentiment app's HTTP surface.
 
-These test in-isolation behavior and DO NOT hit the classroom LLM (which needs
-VPN + a live LiteLLM) or load the real HF pipeline. The live-integration check
-is what `/health` does at deploy time — Coolify polls it, and a failure marks
-the deploy unhealthy.
+These tests do NOT hit the classroom LLM (which needs VPN + a live
+LiteLLM) or load the real HF pipeline. Real integration is checked at
+deploy time via `/health` — Coolify polls it, and a failure marks the
+deploy unhealthy.
 """
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-import main
-from main import LocalResult, app
+import schemas
+from main import app
 
 
 @pytest.fixture
 def client():
-    """FastAPI TestClient with the lifespan disabled (SKIP_LOCAL_MODEL=1 in conftest)."""
+    """FastAPI TestClient — lifespan runs but SKIP_LOCAL_MODEL=1 (from
+    conftest.py) skips the real HF load."""
     with TestClient(app) as c:
         yield c
 
@@ -31,16 +32,13 @@ def test_ready_returns_ok(client):
 
 
 def test_gpu_endpoint_reports_state(client):
-    """/gpu returns a JSON shape regardless of whether torch is installed."""
+    """/gpu returns a valid JSON shape whether or not torch is installed."""
     r = client.get("/gpu")
     assert r.status_code == 200
     body = r.json()
-    # Fields that must always be present, regardless of GPU availability
-    assert "device_setting" in body
-    assert "using_gpu" in body
-    assert "torch_installed" in body
-    assert "cuda_available" in body
-    assert "device_count" in body
+    for key in ("device_setting", "using_gpu", "torch_installed",
+                "cuda_available", "device_count"):
+        assert key in body, f"missing key: {key}"
     assert isinstance(body["devices"], list)
 
 
@@ -57,18 +55,18 @@ def test_analyze_rejects_wrong_type(client):
 
 
 def test_analyze_combines_both_models_when_they_agree(client):
-    """POST /analyze returns both classifications and agreement=True when they match."""
-    fake_llm = main.LLMResult(
+    """/analyze calls both classifiers and returns agreement=True when they match."""
+    fake_llm = schemas.LLMResult(
         sentiment="positive", confidence=0.9,
         reasoning="clearly enthusiastic", model="mock-llm",
     )
-    fake_local = main.LocalResult(
+    fake_local = schemas.LocalResult(
         sentiment="positive", confidence=0.95,
         model="mock-local", device="cpu",
     )
 
-    with patch("main._classify_llm", return_value=fake_llm), \
-         patch("main._classify_local", return_value=fake_local):
+    with patch("main.llm_client.classify_llm", return_value=fake_llm), \
+         patch("main.local_classifier.classify_local", return_value=fake_local):
         r = client.post("/analyze", json={"text": "I loved it!"})
 
     assert r.status_code == 200
@@ -81,17 +79,17 @@ def test_analyze_combines_both_models_when_they_agree(client):
 
 def test_analyze_reports_disagreement(client):
     """When the two models disagree, /analyze returns agreement=False."""
-    fake_llm = main.LLMResult(
+    fake_llm = schemas.LLMResult(
         sentiment="positive", confidence=0.6,
         reasoning="mildly positive", model="mock-llm",
     )
-    fake_local = main.LocalResult(
+    fake_local = schemas.LocalResult(
         sentiment="neutral", confidence=0.55,
         model="mock-local", device="cpu",
     )
 
-    with patch("main._classify_llm", return_value=fake_llm), \
-         patch("main._classify_local", return_value=fake_local):
+    with patch("main.llm_client.classify_llm", return_value=fake_llm), \
+         patch("main.local_classifier.classify_local", return_value=fake_local):
         r = client.post("/analyze", json={"text": "it's fine i guess"})
 
     assert r.status_code == 200
