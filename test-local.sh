@@ -111,26 +111,8 @@ trap cleanup EXIT INT TERM
 printf "\n%stest-local.sh%s   port=%d\n" "$B$Y" "$Z" "$PORT"
 hr
 
-if (( DO_UNIT )); then
-    printf "\n%sUnit tests (pytest)%s\n" "$B" "$Z"
-    if command -v pytest >/dev/null; then
-        pytest -q tests/ && record "pytest" PASS || record "pytest" FAIL
-    elif command -v python3 >/dev/null; then
-        python3 -m pytest -q tests/ && record "pytest (python3 -m)" PASS || record "pytest (python3 -m)" FAIL
-    else
-        printf "  ${R}FAIL${Z}  pytest not found (install with: pip install pytest)\n"
-        record "pytest" FAIL
-    fi
-fi
-
-if (( ! DO_LIVE )); then
-    hr
-    printf "%d checks  ${G}%d passed${Z}  ${R}%d failed${Z}\n\n" "$((PASS+FAIL))" "$PASS" "$FAIL"
-    exit $(( FAIL > 0 ))
-fi
-
 # ==========================================================================
-# 2. Docker build
+# 1. Docker build (moved before pytest so we can run pytest INSIDE the image)
 # ==========================================================================
 
 if (( DO_BUILD )); then
@@ -142,6 +124,26 @@ if (( DO_BUILD )); then
         printf "\n${R}Build failed — stopping here.${Z}\n"
         exit 1
     fi
+fi
+
+# ==========================================================================
+# 2. Unit tests — run inside the built image so you don't need host Python deps
+# ==========================================================================
+
+if (( DO_UNIT )); then
+    printf "\n%sUnit tests (pytest, run inside the container)%s\n" "$B" "$Z"
+    if docker run --rm -e SKIP_LOCAL_MODEL=1 -v "$PWD/tests:/app/tests:ro" \
+            "$IMAGE" python -m pytest -q tests/ ; then
+        record "pytest (in container)" PASS
+    else
+        record "pytest (in container)" FAIL
+    fi
+fi
+
+if (( ! DO_LIVE )); then
+    hr
+    printf "%d checks  ${G}%d passed${Z}  ${R}%d failed${Z}\n\n" "$((PASS+FAIL))" "$PASS" "$FAIL"
+    exit $(( FAIL > 0 ))
 fi
 
 # ==========================================================================

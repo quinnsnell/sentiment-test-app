@@ -1,0 +1,31 @@
+# =============================================================================
+# Base image for sentiment-test-app.
+#
+# Contains the heavy Python dependencies (torch, transformers, HF sentiment
+# model) so the app image can build in seconds instead of ~5 minutes.
+#
+# Rebuilt automatically via .github/workflows/build-base.yml when either
+# requirements.txt or this file changes.
+#
+# Published to GHCR at ghcr.io/quinnsnell/sentiment-test-app-base:latest.
+# Make sure the package visibility is set to "public" so Coolify's build
+# container can pull it without credentials.
+# =============================================================================
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Pre-download the HF sentiment model into the image.
+# Override at build time with:  docker build -f Dockerfile.base --build-arg LOCAL_MODEL_ID=<other-model>
+# Single-line RUN — do NOT use \ continuations; CI/CD tools may inject ARG
+# directives between steps and break multi-line RUN commands.
+ARG LOCAL_MODEL_ID=cardiffnlp/twitter-roberta-base-sentiment-latest
+ENV LOCAL_MODEL_ID=${LOCAL_MODEL_ID}
+RUN python -c "from transformers import AutoTokenizer, AutoModelForSequenceClassification; AutoTokenizer.from_pretrained('${LOCAL_MODEL_ID}'); AutoModelForSequenceClassification.from_pretrained('${LOCAL_MODEL_ID}')"

@@ -3,12 +3,27 @@ name: CI/CD
 on:
   push:
     branches: [main, staging]
+    # Docs-only changes don't trigger a deploy — saves the 5-6 min Coolify cycle.
+    paths-ignore:
+      - '**/*.md'
+      - '.env.example'
+      - '.gitignore'
+      - '.dockerignore'
+      - 'docs/**'
   pull_request:
     branches: [main, staging]
+    paths-ignore:
+      - '**/*.md'
+      - '.env.example'
+      - '.gitignore'
+      - '.dockerignore'
+      - 'docs/**'
 
 jobs:
   # Runs on every push and every PR. GitHub-hosted runner is fine — unit tests
-  # don't hit the VPN-only LLM.
+  # don't hit the VPN-only LLM. SKIP_LOCAL_MODEL=1 so the HF pipeline doesn't
+  # load during tests (we don't need transformers/torch either — big install
+  # skip).
   test:
     runs-on: ubuntu-latest
     steps:
@@ -17,11 +32,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - name: Install lightweight test dependencies (no torch/transformers)
+        run: pip install fastapi 'uvicorn[standard]' httpx pydantic pytest
 
       - name: Unit tests
+        env:
+          SKIP_LOCAL_MODEL: "1"
         run: pytest tests/ -v
 
       - name: Docker build (proves the Dockerfile is valid)
