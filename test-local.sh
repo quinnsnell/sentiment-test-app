@@ -2,6 +2,9 @@
 # =============================================================================
 # test-local.sh — full local test loop for sentiment-test-app.
 #
+# REQUIRES BYU VPN — the /health and /analyze checks call the classroom
+# LiteLLM at ml-capstone.cs.byu.edu:4000, which is VPN-only.
+#
 # Run this before opening a PR. Catches most failures in <30 seconds without
 # a 5-6 minute Coolify roundtrip.
 #
