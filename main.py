@@ -29,7 +29,7 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-APP_VERSION = "0.4.1"
+APP_VERSION = "0.4.2"
 
 LITELLM_URL = os.environ.get("LITELLM_URL", "http://ml-capstone.cs.byu.edu:4000/v1").rstrip("/")
 LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", "sk-noauth")

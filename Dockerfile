@@ -1,33 +1,25 @@
-FROM python:3.12-slim
+# =============================================================================
+# App image — thin layer on top of the pre-built base.
+#
+# The base image (ghcr.io/quinnsnell/sentiment-test-app-base:latest) contains
+# torch, transformers, and the pre-downloaded HF sentiment model. Rebuilt via
+# .github/workflows/build-base.yml on requirements.txt or Dockerfile.base
+# changes.
+#
+# App builds should complete in seconds — only main.py changes on typical
+# pushes. Total deploy time from push to healthy container: ~30-60s.
+# =============================================================================
+FROM ghcr.io/quinnsnell/sentiment-test-app-base:latest
 
 WORKDIR /app
-
-# System deps for tokenizer builds
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Python deps — torch is large (~750 MB), transformers pulls a lot more.
-# This layer will be cached across rebuilds when requirements.txt is unchanged.
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Pre-download the HF sentiment model at build time so first request is fast.
-# Override at build time with:
-#   docker build --build-arg LOCAL_MODEL_ID=<other-model> .
-# Single-line RUN — do NOT use `\` continuations here. Coolify (and other CI/CD
-# tools) may inject synthetic ARG directives between RUN steps, which breaks
-# multi-line RUN commands with backslash continuations.
-ARG LOCAL_MODEL_ID=cardiffnlp/twitter-roberta-base-sentiment-latest
-ENV LOCAL_MODEL_ID=${LOCAL_MODEL_ID}
-RUN python -c "from transformers import AutoTokenizer, AutoModelForSequenceClassification; AutoTokenizer.from_pretrained('${LOCAL_MODEL_ID}'); AutoModelForSequenceClassification.from_pretrained('${LOCAL_MODEL_ID}')"
 
 COPY main.py .
 
 EXPOSE 8000
 
 # start-period gives 120s for the model to load into GPU/CPU on container start.
-# Once loaded, /ready responds in milliseconds.
+# The model is baked into the base image so this is only load-into-VRAM time,
+# not download time.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready').read()" || exit 1
 
