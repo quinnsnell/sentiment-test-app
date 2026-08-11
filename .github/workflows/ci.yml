@@ -42,8 +42,10 @@ jobs:
           SKIP_LOCAL_MODEL: "1"
         run: pytest tests/ -v
 
-      - name: Docker build (proves the Dockerfile is valid)
-        run: docker build -t sentiment-test-app .
+      # Removed: docker build. It duplicates what Coolify does immediately after
+      # this job and pulls the 2 GB base image from GHCR every run (no cache on
+      # GitHub-hosted runners) — ~2 min saved per push. Coolify's build is the
+      # authoritative "does the Dockerfile actually work" check.
 
   # Deploys to STAGING. Runs on push to `staging` (not on PRs), after `test` passes.
   # Coolify's post-deploy health check on /health verifies the LLM path works
