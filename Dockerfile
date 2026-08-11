@@ -13,7 +13,9 @@ FROM ghcr.io/quinnsnell/sentiment-test-app-base:latest
 
 WORKDIR /app
 
-COPY main.py .
+# Copy every top-level Python module. main.py imports config, device, schemas,
+# llm_client, and local_classifier — all need to be in the image.
+COPY *.py ./
 
 EXPOSE 8000
 
