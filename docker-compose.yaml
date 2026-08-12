@@ -1,0 +1,27 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      LITELLM_URL: ${LITELLM_URL:-http://ml-capstone.cs.byu.edu:4000/v1}
+      LITELLM_API_KEY: ${LITELLM_API_KEY:-sk-noauth}
+      MODEL: ${MODEL:-classroom-chat}
+      LOCAL_MODEL_ID: ${LOCAL_MODEL_ID:-cardiffnlp/twitter-roberta-base-sentiment-latest}
+      SKIP_LOCAL_MODEL: ${SKIP_LOCAL_MODEL:-}
+      # CUDA_VISIBLE_DEVICES + DEVICE unset — GPU is configured in Coolify's
+      # Advanced tab (per-team GPU pinning). If you set them here they'd
+      # override whatever Coolify assigns.
+    healthcheck:
+      # /ready is a cheap liveness check — cluster reachability, not full
+      # integration. /health is the deep check students use from the browser
+      # and integration tests. See main.py for details.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready').read()"]
+      interval: 30s
+      timeout: 10s
+      # 120s start period gives the HF pipeline time to load into GPU/CPU
+      # on container start. The model is baked into the base image, so this
+      # is load-into-VRAM time, not download time.
+      start_period: 120s
+      retries: 3
+    restart: unless-stopped

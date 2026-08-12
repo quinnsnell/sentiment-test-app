@@ -57,7 +57,7 @@ jobs:
     steps:
       - name: Trigger Coolify staging deploy
         run: |
-          curl -fsSL "${{ secrets.COOLIFY_DEPLOY_WEBHOOK_STAGING }}" \
+          curl -fsSL -X POST "${{ secrets.COOLIFY_DEPLOY_WEBHOOK_STAGING }}" \
             -H "Authorization: Bearer ${{ secrets.COOLIFY_API_TOKEN }}"
 
   # Deploys to PROD. Runs on push to `main` (usually via merged PR from `staging`),
@@ -69,5 +69,5 @@ jobs:
     steps:
       - name: Trigger Coolify prod deploy
         run: |
-          curl -fsSL "${{ secrets.COOLIFY_DEPLOY_WEBHOOK_PROD }}" \
+          curl -fsSL -X POST "${{ secrets.COOLIFY_DEPLOY_WEBHOOK_PROD }}" \
             -H "Authorization: Bearer ${{ secrets.COOLIFY_API_TOKEN }}"
