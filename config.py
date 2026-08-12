@@ -8,7 +8,7 @@ tree. See `.env.example` for the full list.
 import os
 
 # Bumped on any release you want to see reflected in /health responses.
-APP_VERSION = "0.4.4"
+APP_VERSION = "0.4.8"
 
 # LLM path — where our classroom LiteLLM proxy is, and how we authenticate.
 LITELLM_URL = os.environ.get(
