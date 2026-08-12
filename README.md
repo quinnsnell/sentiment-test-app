@@ -1,3 +1,9 @@
+> **Starting point for BYU CS ml-capstone students:** this is the **reference / growth target**, not the starting template. Students first template [`byu-ml-capstone/hello-world-app`](https://github.com/byu-ml-capstone/hello-world-app) and grow it incrementally into something structurally like this repo, following `student-guide.md` Section 1. The final result should look a lot like what's here.
+>
+> If you jumped straight to this repo without going through the guide, you'll be missing context on the Coolify deploy pipeline, the `byu-ml-capstone-coolify` GitHub App, the roster-based Coolify Team provisioning, and how to test integration with the classroom LiteLLM. Start with the guide instead: `github.com/quinnsnell/ml-capstone-platform`.
+
+---
+
 # sentiment-test-app
 
 A tiny FastAPI service that classifies text sentiment **two ways at once**:
