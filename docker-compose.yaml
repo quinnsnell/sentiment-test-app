@@ -4,6 +4,7 @@ services:
     ports:
       - "8000:8000"
     environment:
+      SERVICE_FQDN_APP: "http://sentiment-test-app-staging.ml-capstone.cs.byu.edu"
       LITELLM_URL: ${LITELLM_URL:-http://ml-capstone.cs.byu.edu:4000/v1}
       LITELLM_API_KEY: ${LITELLM_API_KEY:-sk-noauth}
       MODEL: ${MODEL:-classroom-chat}
