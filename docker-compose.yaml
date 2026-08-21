@@ -1,9 +1,29 @@
 services:
-  app:
-    build: .
-    ports:
-      - "8000:8000"
+  sentiment:
+    build: ./sentiment
+    # `expose:` documents the container's internal port WITHOUT binding it to
+    # a host port. Do NOT use `ports:` here — the shared cluster server only
+    # lets ONE container own each host port at a time, and Coolify's Traefik
+    # routes traffic over the internal `coolify` Docker network anyway.
+    #
+    # For LOCAL development, `docker-compose.override.yml` (auto-merged by
+    # `docker compose up`) adds a host port binding so browsers/curls on
+    # your laptop can reach the app. Coolify uses `-f docker-compose.yaml`
+    # explicitly, so the override is invisible in production.
+    expose:
+      - "8000"
     environment:
+      # Coolify magic: REFERENCING ${SERVICE_FQDN_SENTIMENT} anywhere in
+      # this file tells Coolify to (1) populate that variable with the
+      # Application's configured domain, (2) attach this service to the
+      # `coolify` Docker network, and (3) auto-generate Traefik labels
+      # routing the domain to this service. The variable name follows the
+      # service name: SERVICE_FQDN_<UPPER>. Since this service is `sentiment`
+      # the var is SERVICE_FQDN_SENTIMENT.
+      #
+      # Handing it to APP_URL lets the container read its own public URL if
+      # it ever needs to build absolute links or callbacks.
+      APP_URL: ${SERVICE_FQDN_SENTIMENT}
       LITELLM_URL: ${LITELLM_URL:-http://ml-capstone.cs.byu.edu:4000/v1}
       LITELLM_API_KEY: ${LITELLM_API_KEY:-sk-noauth}
       MODEL: ${MODEL:-classroom-chat}
@@ -15,7 +35,7 @@ services:
     healthcheck:
       # /ready is a cheap liveness check — cluster reachability, not full
       # integration. /health is the deep check students use from the browser
-      # and integration tests. See main.py for details.
+      # and integration tests. See sentiment/main.py for details.
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready').read()"]
       interval: 30s
       timeout: 10s

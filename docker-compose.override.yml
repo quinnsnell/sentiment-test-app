@@ -1,0 +1,17 @@
+# Local development overrides. Docker Compose auto-merges this file when you
+# run `docker compose up` from the repo root (no `-f` flag). Coolify uses
+# `-f docker-compose.yaml` explicitly, so nothing here reaches production.
+#
+# Purpose: expose the `sentiment` service on host port 8000 so your browser
+# / curl on your laptop can reach it. In production, Traefik handles domain
+# routing and no host-port binding is needed (or desired — see the ports vs
+# expose note in docker-compose.yaml).
+#
+# `smoke-test.sh` exports SERVICE_FQDN_SENTIMENT before running compose so
+# the interpolation of ${SERVICE_FQDN_SENTIMENT} in the main file doesn't
+# warn about an undefined variable.
+
+services:
+  sentiment:
+    ports:
+      - "8000:8000"

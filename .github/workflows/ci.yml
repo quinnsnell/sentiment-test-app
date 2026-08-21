@@ -40,7 +40,7 @@ jobs:
       - name: Unit tests
         env:
           SKIP_LOCAL_MODEL: "1"
-        run: pytest tests/ -v
+        run: cd sentiment && pytest tests/ -v
 
       # Removed: docker build. It duplicates what Coolify does immediately after
       # this job and pulls the 2 GB base image from GHCR every run (no cache on
