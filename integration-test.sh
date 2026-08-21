@@ -6,9 +6,9 @@
 #
 # Contrast with the other testing tools in this repo:
 #
-#   test-local.sh       Builds the container locally, runs unit tests +
-#                       endpoint checks against the local container. Run
-#                       BEFORE you push.
+#   smoke-test.sh       Builds the container locally OR curls a given URL,
+#                       runs endpoint checks. Local mode: BEFORE you push.
+#                       Remote mode (URL arg): AFTER a Coolify deploy.
 #
 #   Coolify /health     Deep health check invoked by Coolify at deploy time.
 #                       Verifies the deployed container can reach real

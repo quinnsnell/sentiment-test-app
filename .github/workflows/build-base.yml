@@ -9,8 +9,8 @@ on:
   push:
     branches: [main]
     paths:
-      - requirements.txt
-      - Dockerfile.base
+      - sentiment/requirements.txt
+      - sentiment/Dockerfile.base
       - .github/workflows/build-base.yml
   workflow_dispatch:
 
@@ -36,8 +36,8 @@ jobs:
       - name: Build and push base image
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: Dockerfile.base
+          context: ./sentiment
+          file: sentiment/Dockerfile.base
           push: true
           tags: |
             ghcr.io/quinnsnell/sentiment-test-app-base:latest

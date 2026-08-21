@@ -69,17 +69,42 @@ Example `/analyze` response:
 
 ## Code layout
 
-Business logic is split across small focused modules; `main.py` stays thin and just handles HTTP.
+Repo root holds orchestration (compose files, CI workflow, scripts). All app code lives in the `sentiment/` subdirectory — each service = one subdirectory, same pattern as [`byu-ml-capstone/hello-world-app`](https://github.com/byu-ml-capstone/hello-world-app).
+
+```
+sentiment-test-app/
+├── docker-compose.yaml           # production compose (Coolify reads this)
+├── docker-compose.override.yml   # local-dev only (host port bind); ignored by Coolify
+├── smoke-test.sh                 # local or remote endpoint smoke test
+├── integration-test.sh           # Tier-3 integration tests against a deployed URL
+├── .github/workflows/            # CI: test job + Coolify deploy webhooks + base-image build
+├── .env.example                  # config template; copy to .env for local dev
+└── sentiment/                    # THE APP
+    ├── main.py                   #   FastAPI app + endpoints
+    ├── config.py                 #   env vars + APP_VERSION
+    ├── device.py                 #   GPU / CPU detection
+    ├── schemas.py                #   Pydantic request/response shapes
+    ├── llm_client.py             #   classroom LiteLLM client
+    ├── local_classifier.py       #   local HF pipeline
+    ├── requirements.txt
+    ├── Dockerfile                #   thin FROM the pre-built base image
+    ├── Dockerfile.base           #   base image with torch + HF model baked in
+    ├── .dockerignore
+    ├── conftest.py               #   sets SKIP_LOCAL_MODEL=1 for tests
+    └── tests/                    #   test_api.py, test_extract_json.py
+```
+
+Business logic split across small focused modules; `main.py` stays thin.
 
 | File | Responsibility |
 |---|---|
-| `main.py` | FastAPI app, endpoints (`/ready`, `/gpu`, `/health`, `/analyze`), and startup lifespan |
-| `config.py` | Environment-variable reads + `APP_VERSION`. One place to see everything the app is configured with. |
-| `device.py` | GPU / CPU detection (`detect_device`, `DEVICE`) and status introspection for `/gpu` |
-| `schemas.py` | Pydantic request/response shapes: `AnalyzeRequest`, `LLMResult`, `LocalResult`, `AnalyzeResponse` |
-| `llm_client.py` | Talking to the classroom LiteLLM: `classify_llm`, `extract_json`, `health_check` |
-| `local_classifier.py` | Loading and calling the local HF pipeline: `load_pipeline`, `classify_local`, `health_check` |
-| `tests/` | `test_api.py` for the HTTP surface, `test_extract_json.py` for the JSON parser |
+| `sentiment/main.py` | FastAPI app, endpoints (`/ready`, `/gpu`, `/health`, `/analyze`), startup lifespan |
+| `sentiment/config.py` | Environment-variable reads + `APP_VERSION` |
+| `sentiment/device.py` | GPU / CPU detection (`detect_device`, `DEVICE`) + `/gpu` status |
+| `sentiment/schemas.py` | Pydantic shapes: `AnalyzeRequest`, `LLMResult`, `LocalResult`, `AnalyzeResponse` |
+| `sentiment/llm_client.py` | LiteLLM: `classify_llm`, `extract_json`, `health_check` |
+| `sentiment/local_classifier.py` | HF pipeline: `load_pipeline`, `classify_local`, `health_check` |
+| `sentiment/tests/` | `test_api.py` (HTTP surface), `test_extract_json.py` (parser) |
 
 The **why** — separation of concerns:
 
@@ -108,34 +133,39 @@ Read at runtime; never hardcode. Set locally via `.env` file (git-ignored) or vi
 The recommended loop is:
 
 1. **Edit code.**
-2. **`./test-local.sh`** — runs pytest + docker build + starts the container + hits every endpoint. Fails fast without a 5-6 min Coolify roundtrip.
+2. **`./smoke-test.sh`** — brings up compose, waits for `/ready`, hits every endpoint. Fails fast without a 5–6 min Coolify roundtrip.
 3. Push only when green.
 
 ### Quick start
 
 ```bash
-cp .env.example .env             # local config, git-ignored
-./test-local.sh                  # full loop: pytest, build, run, endpoint checks
+cp .env.example .env                  # local config, git-ignored
+./smoke-test.sh                       # local: builds + starts + endpoint checks
 ```
 
 The script:
 
-- Runs `pytest` first (< 1 second — catches Python bugs immediately)
-- Builds the Docker image
-- Starts the container (tries `--gpus all` first, falls back to CPU if no NVIDIA runtime — happens on Macs)
+- Runs `docker compose up -d --build` (compose reads `.env` from the repo root automatically)
 - Polls `/ready` (up to 180s while the HF model loads)
-- Hits `/gpu`, `/health`, `/analyze` with positive + negative samples
-- Cleans up on exit
+- Hits `/ready`, `/gpu`, `/health`, `/analyze` (positive + negative samples)
+- Leaves the container running so you can keep poking
 
-Requires BYU VPN for the `/health` and `/analyze` checks (they call the classroom LiteLLM).
+Stop with `docker compose down` when done. Requires BYU VPN for `/health` and `/analyze` (they call the classroom LiteLLM).
 
-Useful flags:
+**Also works against a deployed URL** — pass it as an argument to skip the local docker steps:
 
 ```bash
-./test-local.sh --skip-build         # reuse the existing image (fast iteration on main.py only)
-./test-local.sh --skip-live          # unit tests only, no docker
-./test-local.sh --keep-running       # leave the container up at the end for manual poking
-./test-local.sh --port 9000          # publish on a different host port
+./smoke-test.sh http://sentiment-test-app-staging.ml-capstone.cs.byu.edu
+```
+
+Useful right after a Coolify deploy: same checks, remote target. What passes locally should pass remotely; a divergence points at a Coolify-only bug (env vars, GPU allocation, networking).
+
+**For fast iteration on unit tests only** (skip Docker entirely, run pytest directly):
+
+```bash
+cd sentiment
+pip install -r requirements.txt httpx pytest
+SKIP_LOCAL_MODEL=1 pytest -v
 ```
 
 ### Manual smoke tests
@@ -143,15 +173,17 @@ Useful flags:
 If you'd rather drive it by hand:
 
 ```bash
-docker build -t sentiment-test-app .
-docker run --rm -p 8000:8000 --env-file .env sentiment-test-app
-# In another shell:
+export SERVICE_FQDN_SENTIMENT=http://localhost:8000     # stubs the compose interpolation
+docker compose up -d --build
+
 curl -sS http://127.0.0.1:8000/ready
 curl -sS http://127.0.0.1:8000/gpu | python3 -m json.tool
 curl -sS http://127.0.0.1:8000/health | python3 -m json.tool
 curl -sS -X POST http://127.0.0.1:8000/analyze \
   -H 'Content-Type: application/json' \
   -d '{"text":"I loved the movie!"}' | python3 -m json.tool
+
+docker compose down                                     # when done
 ```
 
 See `.env.example` for every configurable variable, including the commented-out `CUDA_VISIBLE_DEVICES` pinning line (Pattern A from the GPU-sharing section below).
@@ -162,7 +194,7 @@ The intended development flow for the whole class:
 
 1. Branch off `staging`: `git checkout staging && git checkout -b your-feature`
 2. Edit code
-3. **`./test-local.sh`** — green before you push
+3. **`./smoke-test.sh`** — green before you push
 4. `git push origin your-feature`
 5. Open PR into `staging` — GitHub Actions `test` job runs on the PR
 6. Merge the PR — pushes to `staging`, triggers `deploy-staging`
@@ -170,7 +202,7 @@ The intended development flow for the whole class:
 8. Open PR from `staging` → `main` when staging looks good
 9. Merge — pushes to `main`, triggers `deploy-prod`
 
-`test-local.sh` gates step 4 (before push), Actions gates steps 6 and 9 (before deploy). Two safety layers.
+`smoke-test.sh` gates step 4 (before push), Actions gates steps 6 and 9 (before deploy). Two safety layers.
 
 ## GPU access in Coolify
 
@@ -224,11 +256,12 @@ If `device_count > 1`, your container sees multiple GPUs (Pattern A wasn't appli
 ## Testing
 
 ```bash
-pip install -r requirements.txt
+cd sentiment
+pip install -r requirements.txt httpx pytest
 pytest tests/ -v
 ```
 
-Unit tests cover input validation, response shape, model-agreement logic, and the `_extract_json` helper. They set `SKIP_LOCAL_MODEL=1` so the HF pipeline doesn't actually load during tests (would need ~500MB download + GPU). Real integration is checked at deploy time via `/health`.
+Unit tests cover input validation, response shape, model-agreement logic, and the `_extract_json` helper. They set `SKIP_LOCAL_MODEL=1` via `sentiment/conftest.py` so the HF pipeline doesn't actually load during tests (would need ~500MB download + GPU). Real integration is checked at deploy time via `/health`.
 
 ## CI/CD pipeline
 
@@ -282,8 +315,8 @@ Two GitHub Actions workflows handle this split:
 
 | Workflow file | Triggers on | Time | Output |
 |---|---|---|---|
-| `.github/workflows/build-base.yml` | Push touching `requirements.txt` or `Dockerfile.base` | ~5-8 min (first) / ~1-2 min (cached) | Pushes base image to GHCR |
-| `.github/workflows/ci.yml` | Push touching `main.py`, tests, or the workflow itself | ~15s test + ~30-60s Coolify build | Runs tests, triggers Coolify deploy |
+| `.github/workflows/build-base.yml` | Push touching `sentiment/requirements.txt` or `sentiment/Dockerfile.base` | ~5-8 min (first) / ~1-2 min (cached) | Pushes base image to GHCR |
+| `.github/workflows/ci.yml` | Push touching anything except docs | ~15s test + ~30-60s Coolify build | Runs tests, triggers Coolify deploy |
 
 The base workflow uses `docker/build-push-action` with a **BuildKit registry cache** (`cache-to: ghcr.io/...:buildcache`). Second and later runs pull unchanged layers from GHCR — even inside a fresh Actions runner, only the layers that actually changed get rebuilt.
 
@@ -297,7 +330,7 @@ Docker layer caching is only useful if there's a persistent place to store the c
 | **GitHub Actions `build-base` job** | Fresh VM each run → no local cache | Compensated by BuildKit registry cache to GHCR |
 | **GitHub Actions inside runners in general** | Ephemeral | Every image pull is fresh; every build starts from zero unless you configure external cache |
 | **Coolify's build container on rigel** | Persistent local docker cache | Pulls base image once, reuses forever until the tag moves |
-| **Your Mac when you run `test-local.sh`** | Persistent local docker cache | Same as Coolify — cached after first pull |
+| **Your Mac when you run `smoke-test.sh`** | Persistent local docker cache | Same as Coolify — cached after first pull |
 | **Docker registries (GHCR, Docker Hub)** | Persistent by nature | Can act as a distributed cache via `cache-from`/`cache-to` |
 
 The split-image pattern **only pays off where caches persist**. That's Coolify (our main win) and your Mac (your dev loop). It doesn't help GitHub-hosted runners much, which is why we don't do `docker build` in the `test` job at all — we just run `pytest` with lightweight deps installed via pip.
@@ -356,9 +389,9 @@ Fast deploys don't come from "make Docker faster" — they come from **structuri
 
 ## Branch flow
 
-- Feature branch → PR into `staging` → merge → auto-deploys to `<group>-staging.ml-capstone.cs.byu.edu`
+- Feature branch → PR into `staging` → merge → auto-deploys to `<your-repo>-staging.ml-capstone.cs.byu.edu`
 - Manual QA on staging URL
-- PR from `staging` into `main` → merge → auto-deploys to `<group>.ml-capstone.cs.byu.edu`
+- PR from `staging` into `main` → merge → auto-deploys to `<your-repo>.ml-capstone.cs.byu.edu`
 - Rollback: `git revert <bad-sha> && git push origin main`
 
 ## Cluster smoke test integration
